@@ -1,0 +1,1 @@
+# js-chunk-collector
