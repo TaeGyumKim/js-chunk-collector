@@ -1,44 +1,50 @@
-import { writeFile, readFile, mkdir } from "fs/promises";
+import { writeFile, mkdir } from "fs/promises";
 import path from "path";
 
-export interface ManifestEntry {
+export interface ManifestItem {
   url: string;
   savedAs: string;
   bytes: number;
-  contentType: string | null;
-  timestamp: string;
+  contentType?: string;
+}
+
+export interface ManifestAction {
+  type: "goto" | "wait" | "scroll" | "click" | "hover";
+  detail: string;
+  at: string;
 }
 
 export interface Manifest {
-  version: string;
-  baseUrl: string;
-  collectedAt: string;
-  actions: string[];
-  files: ManifestEntry[];
+  target: string;
+  count: number;
+  items: ManifestItem[];
+  actions: ManifestAction[];
 }
 
-export function createManifest(baseUrl: string): Manifest {
+export function createManifest(target: string): Manifest {
   return {
-    version: "1.0",
-    baseUrl,
-    collectedAt: new Date().toISOString(),
+    target,
+    count: 0,
+    items: [],
     actions: [],
-    files: [],
   };
 }
 
-export function addEntry(
-  manifest: Manifest,
-  entry: Omit<ManifestEntry, "timestamp">
-): void {
-  manifest.files.push({
-    ...entry,
-    timestamp: new Date().toISOString(),
-  });
+export function addItem(manifest: Manifest, item: ManifestItem): void {
+  manifest.items.push(item);
+  manifest.count = manifest.items.length;
 }
 
-export function addAction(manifest: Manifest, action: string): void {
-  manifest.actions.push(action);
+export function addAction(
+  manifest: Manifest,
+  type: ManifestAction["type"],
+  detail: string
+): void {
+  manifest.actions.push({
+    type,
+    detail,
+    at: new Date().toISOString(),
+  });
 }
 
 export async function writeManifest(
@@ -48,14 +54,4 @@ export async function writeManifest(
   const manifestPath = path.join(outDir, "manifest.json");
   await mkdir(outDir, { recursive: true });
   await writeFile(manifestPath, JSON.stringify(manifest, null, 2), "utf-8");
-}
-
-export async function loadManifest(outDir: string): Promise<Manifest | null> {
-  const manifestPath = path.join(outDir, "manifest.json");
-  try {
-    const content = await readFile(manifestPath, "utf-8");
-    return JSON.parse(content) as Manifest;
-  } catch {
-    return null;
-  }
 }

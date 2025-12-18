@@ -23,18 +23,7 @@ program
     collect,
     []
   )
-  .option(
-    "--hover <selector>",
-    "Hover selector (can be used multiple times)",
-    collect,
-    []
-  )
-  .option(
-    "--route <path>",
-    "Additional route to navigate (can be used multiple times)",
-    collect,
-    []
-  )
+  .option("--headful", "Run browser in headful mode", false)
   .action(async (opts) => {
     try {
       await runGrab({
@@ -47,8 +36,7 @@ program
         timeout: parseInt(opts.timeout, 10),
         scrollCount: parseInt(opts.scroll, 10),
         clicks: opts.click,
-        hovers: opts.hover,
-        routes: opts.route,
+        headful: opts.headful,
       });
     } catch (err) {
       console.error("Fatal error:", (err as Error).message);

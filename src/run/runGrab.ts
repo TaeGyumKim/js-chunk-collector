@@ -3,13 +3,12 @@ import { shouldKeep, type FilterOptions } from "../filter/shouldKeep.js";
 import { saveResponse } from "../save/saveResponse.js";
 import {
   createManifest,
-  addEntry,
+  addItem,
   addAction,
   writeManifest,
-  type Manifest,
 } from "../save/manifest.js";
 import { logStart, logResponse, logSummary, logError } from "../utils/log.js";
-import { executeActionPlan, navigateRoutes } from "./actionPlan.js";
+import { executeActionPlan } from "./actionPlan.js";
 
 export interface GrabOptions {
   url: string;
@@ -21,8 +20,7 @@ export interface GrabOptions {
   timeout: number;
   scrollCount: number;
   clicks: string[];
-  hovers: string[];
-  routes: string[];
+  headful: boolean;
 }
 
 export async function runGrab(options: GrabOptions): Promise<void> {
@@ -38,27 +36,21 @@ export async function runGrab(options: GrabOptions): Promise<void> {
 
   logStart(options.url);
 
-  const browser = await chromium.launch({ headless: true });
+  const browser = await chromium.launch({ headless: !options.headful });
   const context = await browser.newContext({
     userAgent:
       "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
   });
   const page = await context.newPage();
 
-  // Response handler
   const handleResponse = async (response: Response): Promise<void> => {
     const url = response.url();
 
-    // Skip if already seen
-    if (seenUrls.has(url)) {
-      return;
-    }
+    if (seenUrls.has(url)) return;
 
-    const contentType = response.headers()["content-type"] ?? null;
+    const contentType = response.headers()["content-type"] ?? undefined;
 
-    if (!shouldKeep(url, contentType, filterOptions)) {
-      return;
-    }
+    if (!shouldKeep(url, contentType ?? null, filterOptions)) return;
 
     seenUrls.add(url);
 
@@ -66,7 +58,7 @@ export async function runGrab(options: GrabOptions): Promise<void> {
       const body = await response.body();
       const result = await saveResponse(url, body, options.outDir);
 
-      addEntry(manifest, {
+      addItem(manifest, {
         url,
         savedAs: result.savedAs,
         bytes: result.bytes,
@@ -75,7 +67,6 @@ export async function runGrab(options: GrabOptions): Promise<void> {
 
       logResponse(url, result.bytes, true);
     } catch (err) {
-      // Response body not available (e.g., redirect, cancelled)
       logError(`Failed to save ${url}: ${(err as Error).message}`);
     }
   };
@@ -83,50 +74,24 @@ export async function runGrab(options: GrabOptions): Promise<void> {
   page.on("response", handleResponse);
 
   try {
-    // Navigate to URL
+    addAction(manifest, "goto", options.url);
     await page.goto(options.url, {
       waitUntil: "domcontentloaded",
       timeout: options.timeout,
     });
 
-    // Wait for network to settle
+    addAction(manifest, "wait", `networkidle ${options.wait}ms`);
     try {
       await page.waitForLoadState("networkidle", { timeout: options.wait });
     } catch {
-      // networkidle timeout is acceptable, continue anyway
+      // networkidle timeout is acceptable
     }
 
-    // Execute action plan
-    const actionPlanOptions = {
+    await executeActionPlan(page, manifest, {
       scrollCount: options.scrollCount,
       clicks: options.clicks,
-      hovers: options.hovers,
-      routes: options.routes,
-    };
+    });
 
-    const actions = await executeActionPlan(page, actionPlanOptions);
-    actions.forEach((action) => addAction(manifest, action));
-
-    // Navigate additional routes
-    if (options.routes.length > 0) {
-      const waitForResponses = async () => {
-        try {
-          await page.waitForLoadState("networkidle", { timeout: options.wait });
-        } catch {
-          // Continue anyway
-        }
-      };
-
-      const routeActions = await navigateRoutes(
-        page,
-        options.url,
-        options.routes,
-        waitForResponses
-      );
-      routeActions.forEach((action) => addAction(manifest, action));
-    }
-
-    // Final wait
     await page.waitForTimeout(options.wait);
   } catch (err) {
     logError(`Page error: ${(err as Error).message}`);
@@ -134,14 +99,12 @@ export async function runGrab(options: GrabOptions): Promise<void> {
     await browser.close();
   }
 
-  // Write manifest
   await writeManifest(manifest, options.outDir);
 
-  // Print summary
-  const sortedFiles = [...manifest.files].sort((a, b) => b.bytes - a.bytes);
+  const sortedFiles = [...manifest.items].sort((a, b) => b.bytes - a.bytes);
   logSummary({
-    totalFiles: manifest.files.length,
-    totalBytes: manifest.files.reduce((sum, f) => sum + f.bytes, 0),
+    totalFiles: manifest.count,
+    totalBytes: manifest.items.reduce((sum, f) => sum + f.bytes, 0),
     topFiles: sortedFiles.slice(0, 5).map((f) => ({
       path: f.savedAs,
       bytes: f.bytes,
